@@ -1,7 +1,14 @@
 """
 Streamlit UI for sentiment analysis on uploaded CSV files.
-Upload a CSV, choose text column, run analysis, view summary and examples, download result.
+Admin panel: open https://your-app.streamlit.app/?admin=YOUR_SECRET (no button; direct URL).
 """
+
+from pathlib import Path
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+except Exception:
+    pass
 
 import streamlit as st
 import pandas as pd
@@ -12,9 +19,75 @@ from csv_utils import (
     run_sentiment_on_df,
     to_csv_bytes,
 )
+from admin_utils import (
+    log_visitor,
+    save_upload,
+    get_visitor_log,
+    get_uploaded_files,
+)
 
 
+def _admin_secret():
+    try:
+        return st.secrets.get("ADMIN_SECRET", "")
+    except Exception:
+        pass
+    import os
+    return os.environ.get("ADMIN_SECRET", "")
+
+
+def _render_admin():
+    """Admin panel: visitor log (IP, city, timestamp) and downloadable uploads."""
+    st.title("Admin panel")
+    st.caption("Visitor log and uploaded files from the deployed app.")
+
+    st.subheader("Visitor log (IP, city, timestamp)")
+    visitors = get_visitor_log()
+    if not visitors:
+        st.info("No visitor entries yet.")
+    else:
+        st.dataframe(pd.DataFrame(visitors), use_container_width=True, hide_index=True)
+        import io
+        buf = io.BytesIO()
+        pd.DataFrame(visitors).to_csv(buf, index=False)
+        st.download_button("Download visitor log as CSV", data=buf.getvalue(), file_name="visitor_log.csv", mime="text/csv")
+
+    st.subheader("Uploaded files (CSV or any)")
+    files = get_uploaded_files()
+    if not files:
+        st.info("No uploaded files saved yet.")
+    else:
+        for i, (name, path) in enumerate(files):
+            data = path.read_bytes()
+            st.download_button(label=f"Download {name}", data=data, file_name=name, mime="application/octet-stream", key=f"dl_upload_{i}_{path.name}")
+
+
+# Page config must be first Streamlit command
 st.set_page_config(page_title="Sentiment Analysis", layout="wide")
+
+# Admin route: /?admin=SECRET — no button; go to https://your-app.streamlit.app/?admin=YOUR_SECRET
+try:
+    q = st.query_params
+    admin_param = q.get("admin") or ""
+except Exception:
+    try:
+        q = st.experimental_get_query_params()
+        admin_param = (q.get("admin") or [""])[0]
+    except Exception:
+        admin_param = ""
+secret = _admin_secret()
+if secret and admin_param == secret:
+    _render_admin()
+    st.stop()
+
+# Main app: log visitor once per session, then show sentiment UI
+if "visitor_logged" not in st.session_state:
+    try:
+        log_visitor()
+        st.session_state["visitor_logged"] = True
+    except Exception:
+        st.session_state["visitor_logged"] = True
+
 st.title("Customer review sentiment analysis")
 st.markdown("Upload a CSV with a text column (e.g. reviews). We assign **positive**, **neutral**, or **negative** and optional confidence.")
 
@@ -22,6 +95,12 @@ uploaded = st.file_uploader("Upload CSV", type=["csv"])
 if not uploaded:
     st.info("Upload a CSV file to start.")
     st.stop()
+
+# Save copy for admin (any upload)
+try:
+    save_upload(uploaded, uploaded.name)
+except Exception:
+    pass
 
 df = read_uploaded_csv(uploaded)
 detected = detect_text_column(df)
