@@ -1,0 +1,12 @@
+jd.md
+plan.md
+__pycache__
+*.pyc
+.venv
+venv
+.env
+*.egg-info
+.pytest_cache
+.coverage
+htmlcov
+.DS_Store
